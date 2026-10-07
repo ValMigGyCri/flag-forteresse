@@ -1,15 +1,15 @@
 // Service worker : garde l'application en cache pour qu'elle fonctionne sans internet.
 // Changez le numéro de version à chaque mise à jour de index.html.
-const CACHE = "zone-attente-v1";
+const CACHE = "zone-attente-v2";
 const FILES = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png",
-  "./icons/icon-maskable-512.png",
-  "./icons/apple-touch-icon.png",
-  "./icons/favicon.png",
+  "./icon-192.png",
+  "./icon-512.png",
+  "./icon-maskable-512.png",
+  "./apple-touch-icon.png",
+  "./favicon.png",
 ];
 
 self.addEventListener("install", e => {
