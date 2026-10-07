@@ -1,0 +1,920 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Zone d'attente</title>
+<meta name="description" content="Écran tactile pour l'EPS : chrono d'attente par élève, temps de jeu et palmarès.">
+<meta name="theme-color" content="#0b1020">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/favicon.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;800&family=Barlow:wght@400;500;600&display=swap">
+<style>
+[hidden] { display: none !important; }
+html { color-scheme: light; }
+body { margin: 0; }
+/* Layout : barre de partie en haut (chrono global + commandes), deux colonnes d'équipe côte à côte,
+   réglages en panneau latéral, palmarès en scène plein écran (look nuit unique, voulu). */
+:root {
+  --bg: #eef1f4;
+  --surface: #ffffff;
+  --fg: #16202a;
+  --muted: #5b6875;
+  --line: #d3dae1;
+  --wait: #d62839;
+  --wait-deep: #a81c2b;
+  --go: #1f9d55;
+  --idle: #ffffff;
+  --idle-fg: #16202a;
+  --accent: #1d4ed8;
+  --t1: #2563eb;
+  --t2: #c026d3;
+  --night: #0b1020;
+  --night-2: #1c2a5a;
+  --stage-fg: #f5f7ff;
+  --stage-muted: #aab4d6;
+  --gold: #ffcf3f;
+  --f-display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --f-body: "Barlow", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11161c; --surface: #1a2129; --fg: #eef2f6; --muted: #9aa7b4; --line: #2c3743;
+    --idle: #232c36; --idle-fg: #eef2f6; --accent: #7aa2ff; --t1: #5b8cff; --t2: #e05ef0; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11161c; --surface: #1a2129; --fg: #eef2f6; --muted: #9aa7b4; --line: #2c3743;
+  --idle: #232c36; --idle-fg: #eef2f6; --accent: #7aa2ff; --t1: #5b8cff; --t2: #e05ef0; color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--f-body); font-size: 16px;
+  display: flex; flex-direction: column; padding-inline: 16px; box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent; user-select: none;
+}
+*, *::before, *::after { box-sizing: border-box; }
+
+/* ---------- Barre du haut ---------- */
+header { display: flex; align-items: center; gap: 12px 20px; flex-wrap: wrap; padding-block: 10px; }
+.brand { display: flex; align-items: center; gap: 12px; }
+h1 { font-family: var(--f-display); font-weight: 800; font-size: 1.8rem; margin: 0; text-transform: uppercase; line-height: 1; }
+.chip {
+  font-family: var(--f-display); font-weight: 600; font-size: 1.1rem; padding: 3px 10px;
+  border: 2px solid var(--line); border-radius: 999px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.clock {
+  display: flex; align-items: baseline; gap: 10px; margin-inline: auto;
+  padding: 4px 18px; border-radius: 14px; background: var(--surface); border: 2px solid var(--line);
+}
+.clock-label { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+.clock-time { font-family: var(--f-display); font-weight: 800; font-size: 2.4rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.clock.low { border-color: var(--wait); }
+.clock.low .clock-time { color: var(--wait); }
+.clock.paused .clock-time { animation: blink 1s steps(2, start) infinite; }
+@keyframes blink { to { visibility: hidden; } }
+.tools { display: flex; gap: 8px; flex-wrap: wrap; }
+.tool {
+  font: 600 .95rem var(--f-body); color: var(--fg); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 10px; padding: 9px 14px; cursor: pointer;
+}
+.tool:hover { border-color: var(--muted); }
+.tool.primary { background: var(--go); border-color: var(--go); color: #fff; font-size: 1.05rem; padding-inline: 18px; }
+.tool.warn { color: var(--wait); border-color: var(--wait); }
+.tool:focus-visible, .student:focus-visible, .btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.confirm-bar {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center;
+  background: var(--surface); border: 2px solid var(--wait); border-radius: 12px; padding: 8px 12px; margin-bottom: 8px; font-weight: 600;
+}
+
+/* ---------- Équipes ---------- */
+main.teams {
+  flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding-block: 2px 14px;
+}
+.team { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.team-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  border-bottom: 5px solid var(--tc); padding-block: 2px 6px; margin-bottom: 10px;
+}
+.team-head h2 { font-family: var(--f-display); font-weight: 800; text-transform: uppercase; font-size: 1.6rem; margin: 0; color: var(--tc); line-height: 1; }
+.team-count { font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.team-count b { color: var(--wait); }
+.grid {
+  flex: 1; min-height: 0; overflow-y: auto; display: grid; gap: 10px; align-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(var(--cell, 150px), 1fr));
+  grid-auto-rows: var(--row, 96px);
+}
+.empty { color: var(--muted); padding: 24px 8px; }
+@media (max-width: 760px) {
+  main.teams { grid-template-columns: 1fr; overflow-y: auto; }
+  .grid { overflow: visible; }
+}
+
+/* ---------- Boutons élèves ---------- */
+.student {
+  position: relative; overflow: hidden; border-radius: 14px; cursor: pointer;
+  border: 2px solid var(--line); background: var(--idle); color: var(--idle-fg);
+  font-family: var(--f-display); font-weight: 800; text-transform: uppercase;
+  font-size: var(--name-size, 1.9rem); letter-spacing: .02em; line-height: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  padding: 8px; touch-action: manipulation; transition: transform .08s ease;
+}
+.student:active { transform: scale(.97); }
+.student .fill { position: absolute; inset: 0; transform-origin: left center; transform: scaleX(var(--p, 0)); background: var(--go); }
+.student .name, .student .sub { position: relative; z-index: 1; max-width: 100%; overflow-wrap: anywhere; text-align: center; }
+.student .sub {
+  font-family: var(--f-body); font-weight: 600; font-size: clamp(.8rem, calc(var(--name-size, 1.9rem) * .42), 1.1rem);
+  text-transform: none; letter-spacing: 0; line-height: 1.2; opacity: .95; min-height: 1.2em;
+}
+.student .sub.swap { animation: swap .35s ease-out; }
+@keyframes swap { from { opacity: 0; transform: translateY(6px); } to { opacity: .95; transform: none; } }
+.student .time {
+  position: absolute; top: 6px; right: 8px; z-index: 1; font-family: var(--f-display); font-weight: 800;
+  font-size: 1rem; font-variant-numeric: tabular-nums; background: rgba(0,0,0,.22); padding: 1px 7px; border-radius: 999px;
+}
+.student:not(.waiting) .time, .student:not(.waiting) .ball { display: none; }
+.student .ball {
+  position: absolute; z-index: 1; bottom: 8px; left: clamp(4px, calc(var(--p, 0) * 100% - 9px), calc(100% - 22px));
+  width: 18px; height: 18px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff8c9, #ffd23f 45%, #e0a100);
+  box-shadow: 0 2px 0 rgba(0,0,0,.25); animation: bounce .55s cubic-bezier(.3,0,.7,1) infinite alternate;
+}
+@keyframes bounce { from { transform: translateY(0) scaleY(.85); } to { transform: translateY(-22px) scaleY(1); } }
+.student.waiting { background: var(--wait); border-color: var(--wait-deep); color: #fff; }
+.student.final .sub { font-family: var(--f-display); font-weight: 800; font-size: calc(var(--name-size, 1.9rem) * .8); }
+.student.final { animation: shake .25s ease-in-out infinite; }
+@keyframes shake { 0%,100% { transform: rotate(0); } 25% { transform: rotate(-1.2deg); } 75% { transform: rotate(1.2deg); } }
+.student.done { background: var(--go); border-color: var(--go); color: #fff; animation: pulse 1.1s ease-in-out infinite; }
+.student.done .fill { transform: scaleX(1); }
+.student.done .sub { font-family: var(--f-display); font-weight: 800; text-transform: uppercase; font-size: calc(var(--name-size, 1.9rem) * .6); }
+@keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(47,191,108,0); filter: brightness(1); } 50% { box-shadow: 0 0 0 7px rgba(47,191,108,.5); filter: brightness(1.15); } }
+.student.frozen { opacity: .75; }
+
+/* ---------- Réglages ---------- */
+.overlay { position: fixed; inset: 0; background: rgba(10,14,18,.55); display: flex; justify-content: flex-end; z-index: 10; }
+.panel {
+  background: var(--surface); color: var(--fg); width: min(480px, 100%); height: 100%; overflow-y: auto;
+  padding: calc(20px + env(safe-area-inset-top, 0px)) 20px calc(20px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; gap: 22px; user-select: text;
+}
+.panel h2 { font-family: var(--f-display); font-weight: 800; text-transform: uppercase; font-size: 1.6rem; margin: 0; }
+.panel h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 4px; }
+.panel section { display: flex; flex-direction: column; gap: 10px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.btn {
+  font: 600 .95rem var(--f-body); border-radius: 10px; padding: 9px 14px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.danger { color: var(--wait); border-color: var(--wait); background: transparent; }
+.btn.on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+textarea, input[type=number], input[type=text] {
+  font: 500 1rem var(--f-body); color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px;
+}
+textarea { min-height: 160px; resize: vertical; width: 100%; }
+input[type=text] { width: 100%; font-weight: 600; }
+input[type=number] { width: 7ch; font-variant-numeric: tabular-nums; }
+.team-edit { border-left: 5px solid var(--tc); padding-left: 12px; }
+.hint { color: var(--muted); font-size: .88rem; margin: 0; }
+.toggle { display: flex; align-items: center; gap: 10px; font-weight: 500; }
+.toggle input { width: 20px; height: 20px; }
+.panel-head { display: flex; justify-content: space-between; align-items: center; }
+.toast {
+  position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-weight: 600; z-index: 40;
+}
+
+/* ---------- Palmarès (scène de nuit) ---------- */
+.stage {
+  position: fixed; inset: 0; z-index: 30; color: var(--stage-fg); color-scheme: dark;
+  background: radial-gradient(ellipse at 50% 115%, var(--night-2) 0%, var(--night) 62%);
+  display: flex; flex-direction: column; gap: 12px;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px));
+}
+#fx { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+.stage-top, .stage-nav { position: relative; z-index: 2; display: flex; gap: 10px; }
+.stage-top { justify-content: space-between; align-items: center; }
+.stage-nav { justify-content: center; }
+.stage-step { color: var(--stage-muted); font-variant-numeric: tabular-nums; font-weight: 600; }
+.sbtn {
+  font: 700 1.1rem var(--f-body); border-radius: 12px; padding: 12px 22px; cursor: pointer;
+  background: rgba(255,255,255,.08); color: var(--stage-fg); border: 1px solid rgba(255,255,255,.2);
+}
+.sbtn.main { background: var(--gold); color: #1a1300; border-color: var(--gold); padding-inline: 34px; }
+.sbtn:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+.stage-body {
+  position: relative; z-index: 0; flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 18px;
+}
+.kicker { font-family: var(--f-display); font-weight: 800; letter-spacing: .22em; text-transform: uppercase; color: var(--gold); font-size: clamp(1.1rem, 2.6vw, 2rem); }
+.big { font-family: var(--f-display); font-weight: 800; text-transform: uppercase; font-size: clamp(3.4rem, 12vw, 10rem); line-height: .9; margin: 0; text-wrap: balance; overflow-wrap: anywhere; }
+.big.many { font-size: clamp(2.2rem, 6vw, 5rem); display: flex; flex-wrap: wrap; justify-content: center; gap: .1em .5em; }
+.teaser { font-family: var(--f-display); font-weight: 600; font-size: clamp(1.8rem, 4.5vw, 3.8rem); margin: 0; text-wrap: balance; }
+.teaser .dots span { animation: dot 1.2s infinite; opacity: 0; }
+.teaser .dots span:nth-child(2) { animation-delay: .2s; } .teaser .dots span:nth-child(3) { animation-delay: .4s; }
+@keyframes dot { 40%, 100% { opacity: 1; } }
+.sub-lead { font-size: clamp(1.1rem, 2.3vw, 1.7rem); color: var(--stage-muted); margin: 0; max-width: 46ch; text-wrap: balance; }
+.badge { display: inline-block; background: var(--gold); color: #1a1300; font-family: var(--f-display); font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 6px 18px; border-radius: 999px; font-size: clamp(1.1rem, 2.6vw, 2rem); }
+.phrase { font-size: clamp(1.2rem, 2.6vw, 2rem); max-width: 34ch; margin: 0; text-wrap: balance; line-height: 1.3; }
+.stat { color: var(--stage-muted); font-variant-numeric: tabular-nums; font-size: clamp(1rem, 2vw, 1.4rem); font-weight: 600; }
+.tchip { display: inline-block; padding: 3px 12px; border-radius: 999px; font: 600 .95rem var(--f-body); color: #fff; letter-spacing: 0; text-transform: none; vertical-align: middle; }
+.pop { animation: pop .8s cubic-bezier(.2,1.5,.4,1) both; }
+@keyframes pop { from { transform: scale(.2); opacity: 0; } to { transform: none; opacity: 1; } }
+.rise { animation: rise .6s ease-out both; }
+@keyframes rise { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+.rank-list { list-style: none; width: min(1100px, 100%); display: flex; flex-direction: column; gap: 10px; padding: 0; margin: 0; }
+.rank-list li {
+  display: grid; grid-template-columns: 3.4rem minmax(0, 1fr) auto; gap: 2px 16px; align-items: center; text-align: left;
+  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.1); border-radius: 14px; padding: 10px 18px;
+}
+.rank-list li.first { background: rgba(255,207,63,.14); border-color: rgba(255,207,63,.5); }
+.rank { font-family: var(--f-display); font-weight: 800; font-size: 2.4rem; color: var(--gold); grid-row: span 2; text-align: center; }
+.rname { font-family: var(--f-display); font-weight: 800; font-size: clamp(1.5rem, 3vw, 2.4rem); text-transform: uppercase; line-height: 1; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.rtext { color: #d4dbf3; font-size: clamp(.95rem, 1.6vw, 1.15rem); min-width: 0; }
+.rtext b { color: var(--gold); }
+.rhits { grid-row: span 2; font-family: var(--f-display); font-weight: 800; font-size: 1.8rem; font-variant-numeric: tabular-nums; text-align: right; line-height: 1; }
+.rhits small { display: block; font-size: .8rem; font-family: var(--f-body); color: var(--stage-muted); font-weight: 600; }
+.more { color: var(--stage-muted); font-weight: 600; }
+.team-cards { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; width: min(1000px, 100%); }
+.tcard { flex: 1 1 280px; border-radius: 18px; padding: 20px; background: rgba(255,255,255,.07); border-top: 8px solid var(--tc); display: flex; flex-direction: column; gap: 6px; }
+.tcard h3 { font-family: var(--f-display); font-weight: 800; text-transform: uppercase; font-size: clamp(1.8rem, 3.5vw, 2.8rem); margin: 0; }
+.tcard .n { font-family: var(--f-display); font-weight: 800; font-size: clamp(3rem, 7vw, 5.5rem); line-height: 1; font-variant-numeric: tabular-nums; }
+.tcard p { margin: 0; color: var(--stage-muted); font-weight: 600; }
+@media (max-width: 600px) { .rank-list li { grid-template-columns: 2.4rem minmax(0, 1fr) auto; padding: 8px 10px; gap: 2px 10px; } .rank { font-size: 1.8rem; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .student.done, .student.final, .student .ball, .student .sub.swap, .pop, .rise, .teaser .dots span, .clock.paused .clock-time { animation: none; }
+  .teaser .dots span { opacity: 1; }
+  .student { transition: none; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1>Zone d'attente</h1>
+    <span class="chip" id="chip">Attente : 60 s</span>
+  </div>
+  <div class="clock" id="clockBox">
+    <span class="clock-label" id="clockLabel">Partie</span>
+    <span class="clock-time" id="clock">20:00</span>
+  </div>
+  <div class="tools" id="controls"></div>
+  <div class="tools">
+    <button class="tool" id="btnInstall" type="button" hidden>Installer l'application</button>
+    <button class="tool" id="btnFull" type="button">Plein écran</button>
+    <button class="tool" id="btnSettings" type="button">Réglages</button>
+  </div>
+</header>
+<div class="confirm-bar" id="confirmBar" hidden>
+  <span id="confirmText"></span>
+  <button class="btn danger" id="confirmYes" type="button">Oui</button>
+  <button class="btn" id="confirmNo" type="button">Annuler</button>
+</div>
+
+<main class="teams" id="teams"></main>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="pTitle">
+    <div class="panel-head">
+      <h2 id="pTitle">Réglages</h2>
+      <button class="btn" id="btnClose" type="button">Fermer</button>
+    </div>
+
+    <section>
+      <h3>Durée de la partie</h3>
+      <div class="row" id="gamePresets"></div>
+      <div class="row"><label for="gmin">Personnalisé :</label><input type="number" id="gmin" min="1" max="120" step="1"> <span>minutes</span></div>
+    </section>
+
+    <section>
+      <h3>Temps d'attente après une touche</h3>
+      <div class="row" id="presets"></div>
+      <div class="row"><label for="secs">Personnalisé :</label><input type="number" id="secs" min="5" max="900" step="5"> <span>secondes</span></div>
+    </section>
+
+    <section class="team-edit" style="--tc: var(--t1)">
+      <h3>Équipe 1</h3>
+      <input type="text" id="t0name" aria-label="Nom de l'équipe 1">
+      <textarea id="t0names" spellcheck="false" placeholder="Un prénom par ligne" aria-label="Élèves de l'équipe 1"></textarea>
+      <div class="row"><label class="btn" for="file0">Importer un fichier…</label><input type="file" id="file0" accept=".txt,.csv,text/plain,text/csv" hidden></div>
+    </section>
+
+    <section class="team-edit" style="--tc: var(--t2)">
+      <h3>Équipe 2</h3>
+      <input type="text" id="t1name" aria-label="Nom de l'équipe 2">
+      <textarea id="t1names" spellcheck="false" placeholder="Un prénom par ligne" aria-label="Élèves de l'équipe 2"></textarea>
+      <div class="row"><label class="btn" for="file1">Importer un fichier…</label><input type="file" id="file1" accept=".txt,.csv,text/plain,text/csv" hidden></div>
+    </section>
+
+    <section>
+      <div class="row"><button class="btn primary" id="btnApply" type="button">Enregistrer les équipes</button></div>
+      <p class="hint">Un prénom par ligne (ou séparés par des virgules). Vous pouvez coller une colonne depuis Excel.</p>
+    </section>
+
+    <section>
+      <h3>Options</h3>
+      <label class="toggle"><input type="checkbox" id="sound"> Sons (bip de fin d'attente, sirène, palmarès)</label>
+      <label class="toggle"><input type="checkbox" id="funny"> Messages rigolos pendant l'attente</label>
+    </section>
+
+    <section>
+      <h3>Comment ça marche</h3>
+      <p class="hint">Touchez « Lancer la partie » pour démarrer le temps de jeu. Un élève touché appuie sur son prénom : son chrono démarre et la touche est comptée. À la fin du temps de jeu, une sirène retentit et le palmarès s'ouvre. « Nouvelle partie » efface les touches.</p>
+    </section>
+  </div>
+</div>
+
+<div class="stage" id="stage" hidden>
+  <canvas id="fx"></canvas>
+  <div class="stage-top">
+    <span class="stage-step" id="stageStep"></span>
+    <button class="sbtn" id="stageClose" type="button">Quitter le palmarès</button>
+  </div>
+  <div class="stage-body" id="stageBody"></div>
+  <div class="stage-nav">
+    <button class="sbtn" id="stagePrev" type="button">Précédent</button>
+    <button class="sbtn main" id="stageNext" type="button">Suivant</button>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(() => {
+  /* ================= Données ================= */
+  const DEFAULT_TEAMS = [
+    { name: "Les Faucons", students: ["Léa","Noah","Emma","Gabriel","Chloé","Luca","Zoé","Arthur","Mia","Nathan","Inès","Samuel","Lina","Elias","Jade","Tom","Alice","Maël","Sofia","Adam"] },
+    { name: "Les Loups", students: ["Hugo","Louise","Jules","Manon","Liam","Camille","Ethan","Rose","Malo","Anna","Raphaël","Nina","Léo","Eva","Nolan","Sarah","Victor","Lou","Théo","Clara"] },
+  ];
+  const WAIT_PRESETS = [30, 45, 60, 90, 120, 180];
+  const GAME_PRESETS = [10, 15, 20, 25, 30, 45];
+  const DONE_MS = 5000;
+  const MSG_MS = 4000;
+
+  const MSG = {
+    start: [
+      "Aïe ! Rechargement en cours…", "Respire, stratège.", "Même les héros passent par ici.",
+      "Balle reçue, ego intact.", "Pause tactique obligatoire.", "Le banc des légendes t'accueille.",
+      "Tu observes. Tu apprends.", "Retiens qui a tiré. Vengeance plus tard.",
+    ],
+    mid: [
+      "Repère la faille dans leur forteresse.", "Imagine ton chemin jusqu'au drapeau.", "Plan secret en préparation…",
+      "Mode ninja : 50 % chargé.", "Ton équipe compte sur toi.", "Les meilleurs attaquants savent attendre.",
+      "Compte les défenseurs adverses.", "Mission espionnage : regarde avant de courir.", "Leur drapeau a l'air bien seul…",
+      "Prépare un détour par le côté.",
+    ],
+    end: [
+      "Échauffe tes jambes !", "Lacets serrés ? Regard fixé ?", "Le drapeau t'attend…",
+      "Prépare ton sprint !", "Repère ton premier abri.", "Mode ninja : presque prêt.",
+    ],
+    done: ["Retour au combat !", "Fonce !", "Go, go, go !", "À l'attaque !", "Va chercher ce drapeau !", "Libération !"],
+  };
+
+  // Titres du palmarès : [titre, phrase]
+  const LEAST = [
+    ["Fantôme officiel", "Les balles ont fouillé tout le gymnase. Sans succès."],
+    ["Statue du gymnase", "Le concierge a failli l'inventorier avec le matériel."],
+    ["Sentinelle du drapeau", "Le drapeau a dormi tranquille toute la partie. On sait grâce à qui."],
+    ["Pro du camping", "Une tente derrière le tapis, une vue sur le drapeau, et zéro souci."],
+    ["Ninja invisible", "Des témoins affirment avoir vu du mouvement. Rien n'est prouvé."],
+    ["Mur de briques", "Immobile comme la forteresse. Et tout aussi solide."],
+    ["As du camouflage", "Un plot, un tapis, une forteresse ? Impossible à repérer."],
+    ["Bouclier vivant", "Les balles faisaient demi-tour en approchant."],
+  ];
+  const MOST = [
+    ["Aimant à balles", "Les balles ont un chouchou. C'est officiel."],
+    ["Tête brûlée", "Courage : 100 %. Discrétion : 0 %."],
+    ["Carte VIP de la zone d'attente", "La zone d'attente va bientôt porter son nom."],
+    ["Cœur de lion", "Toujours en première ligne. Puis en deuxième. Puis en troisième."],
+    ["Bélier humain", "Les forteresses tremblent encore à son passage."],
+    ["Pilote sans freins", "La marche arrière ? Jamais entendu parler."],
+    ["Pro de la chasse au drapeau", "Sans cette audace, aucun drapeau ne quitterait jamais sa forteresse."],
+    ["Diversion de choc", "Toutes les balles volaient dans sa direction. Pendant ce temps, l'équipe avançait. Stratégie ? On dira oui."],
+  ];
+
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem("za:" + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem("za:" + k, JSON.stringify(v)); } catch {} }
+  };
+
+  const cfg = Object.assign({ seconds: 60, gameMin: 20, sound: true, funny: true }, store.get("cfg", {}));
+  // reprise des anciens réglages
+  if (!store.get("cfg", null)) {
+    cfg.seconds = store.get("seconds", cfg.seconds); cfg.sound = store.get("sound", cfg.sound); cfg.funny = store.get("funny", cfg.funny);
+  }
+  let teams = store.get("teams", null);
+  if (!teams) {
+    teams = JSON.parse(JSON.stringify(DEFAULT_TEAMS));
+    const old = store.get("names", null);
+    if (Array.isArray(old) && old.length) teams[0].students = old;
+  }
+  const freshGame = () => ({ state: "ready", startV: null, pausedAccum: 0, pausedSince: null, hits: {}, timers: {}, doneAt: {} });
+  let g = Object.assign(freshGame(), store.get("game", {}));
+
+  const saveCfg = () => store.set("cfg", cfg);
+  const saveTeams = () => store.set("teams", teams);
+  const saveGame = () => store.set("game", g);
+
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const key = (ti, name) => ti + "|" + name;
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Horloge virtuelle : s'arrête pendant la pause, pour la partie ET les chronos d'attente
+  const vnow = () => Date.now() - g.pausedAccum - (g.state === "paused" ? Date.now() - g.pausedSince : 0);
+
+  function fmt(s) { s = Math.ceil(s); const m = Math.floor(s / 60), r = s % 60; return m ? `${m}:${String(r).padStart(2, "0")}` : `${r} s`; }
+  function fmtClock(ms) { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+  const hitsTxt = n => n + (n > 1 ? " touches" : " touche");
+  const pick = (list, seed, step) => list[(seed + step) % list.length];
+
+  /* ================= Rendu des équipes ================= */
+  const teamsEl = $("teams");
+  function render() {
+    teamsEl.innerHTML = "";
+    teams.forEach((t, ti) => {
+      const sec = document.createElement("section");
+      sec.className = "team"; sec.style.setProperty("--tc", `var(--t${ti + 1})`);
+      sec.innerHTML = `<div class="team-head"><h2></h2><span class="team-count" id="count${ti}"></span></div><div class="grid"></div>`;
+      sec.querySelector("h2").textContent = t.name;
+      const grid = sec.querySelector(".grid");
+      if (!t.students.length) grid.innerHTML = `<p class="empty">Aucun élève. Ajoutez la liste dans les réglages.</p>`;
+      t.students.forEach(name => {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "student"; b.dataset.key = key(ti, name);
+        b.innerHTML = `<span class="fill"></span><span class="ball"></span><span class="time"></span><span class="name"></span><span class="sub"></span>`;
+        b.querySelector(".name").textContent = name;
+        b.addEventListener("click", () => tap(ti, name));
+        grid.appendChild(b);
+      });
+      teamsEl.appendChild(sec);
+    });
+    layout(); paint();
+  }
+
+  function layout() {
+    const grid = teamsEl.querySelector(".grid"); if (!grid) return;
+    const n = Math.max(1, ...teams.map(t => t.students.length));
+    const narrow = innerWidth <= 760;
+    const w = grid.clientWidth || innerWidth / 2;
+    const h = narrow ? innerHeight * 0.75 : grid.clientHeight || innerHeight - 140;
+    const gap = 10;
+    let best = { cell: 0 };
+    for (let cols = 1; cols <= n; cols++) {
+      const rows = Math.ceil(n / cols);
+      const cw = (w - gap * (cols - 1)) / cols, ch = (h - gap * (rows - 1)) / rows;
+      const cell = Math.min(cw / 2, ch);
+      if (cell > best.cell) best = { cell, cw, ch };
+    }
+    const rowH = Math.max(84, Math.min(best.ch, best.cw / 1.4, 220));
+    const minW = Math.max(130, Math.floor(best.cw) - 1);
+    teamsEl.querySelectorAll(".grid").forEach(gr => {
+      gr.style.setProperty("--cell", minW + "px");
+      gr.style.setProperty("--row", Math.floor(rowH) + "px");
+      gr.style.setProperty("--name-size", Math.max(1.3, Math.min(rowH / 52, 3.2)) + "rem");
+    });
+  }
+
+  /* ================= Jeu ================= */
+  function tap(ti, name) {
+    unlockAudio();
+    if (g.state === "paused") return toast("Partie en pause");
+    if (g.state === "ended") return toast("Partie terminée. Touchez « Nouvelle partie » pour rejouer.");
+    const k = key(ti, name), now = vnow(), t = g.timers[k];
+    if (!t) {
+      g.timers[k] = { start: now, seed: Math.floor(Math.random() * 100), msg: "", shownAt: 0, count: 0 };
+      g.hits[k] = (g.hits[k] || 0) + 1;
+      delete g.doneAt[k];
+      saveGame();
+    } else if (now - t.start >= cfg.seconds * 1000) {
+      delete g.timers[k]; delete g.doneAt[k]; saveGame();
+    }
+    paint();
+  }
+
+  function setSub(sub, text) {
+    if (sub.textContent === text) return;
+    sub.textContent = text;
+    sub.classList.remove("swap"); void sub.offsetWidth; sub.classList.add("swap");
+  }
+
+  function paint() {
+    const now = vnow(), total = cfg.seconds * 1000;
+    const waiting = teams.map(() => 0);
+    teamsEl.querySelectorAll(".student").forEach(b => {
+      const k = b.dataset.key, t = g.timers[k];
+      const sub = b.querySelector(".sub"), time = b.querySelector(".time");
+      const frozen = g.state === "paused";
+      if (!t) {
+        if (b.className !== "student") { b.className = "student"; b.style.setProperty("--p", 0); sub.textContent = ""; }
+        b.setAttribute("aria-label", b.querySelector(".name").textContent + " : toucher pour lancer le chrono");
+        return;
+      }
+      const elapsed = now - t.start, p = Math.min(elapsed / total, 1);
+      if (p >= 1) {
+        if (g.doneAt[k] == null) { g.doneAt[k] = now; beep(); saveGame(); }
+        if (now - g.doneAt[k] > DONE_MS) { delete g.timers[k]; delete g.doneAt[k]; saveGame(); return; }
+        b.className = "student done" + (frozen ? " frozen" : ""); b.style.setProperty("--p", 1);
+        setSub(sub, cfg.funny ? pick(MSG.done, t.seed, 0) : "Tu peux revenir !");
+      } else {
+        waiting[+k.split("|")[0]]++;
+        const left = (total - elapsed) / 1000;
+        b.style.setProperty("--p", p);
+        time.textContent = fmt(left);
+        if (frozen) {
+          b.className = "student waiting frozen"; setSub(sub, "Pause");
+        } else if (left <= 3) {
+          b.className = "student waiting final"; setSub(sub, Math.ceil(left) + "…");
+        } else {
+          b.className = "student waiting";
+          const untilFinal = (left - 3) * 1000;
+          if (!t.msg || (now - t.shownAt >= MSG_MS && untilFinal >= 2500)) {
+            const list = p < .3 ? MSG.start : p < .75 ? MSG.mid : MSG.end;
+            t.msg = pick(list, t.seed, t.count++); t.shownAt = now;
+          }
+          setSub(sub, cfg.funny ? t.msg : "Patiente…");
+        }
+      }
+      b.setAttribute("aria-label", b.querySelector(".name").textContent + " : " + sub.textContent);
+    });
+    waiting.forEach((n, ti) => { const el = $("count" + ti); if (el) el.innerHTML = n ? `<b>${n}</b> en zone d'attente` : "Personne en zone"; });
+    paintClock();
+  }
+
+  function remainingMs() { return cfg.gameMin * 60000 - (g.startV == null ? 0 : vnow() - g.startV); }
+  let lastControls = "";
+  function paintClock() {
+    const box = $("clockBox"), rem = remainingMs();
+    if (g.state === "running" && rem <= 0) return endGame();
+    const label = { ready: "Partie", running: "Temps restant", paused: "En pause", ended: "Terminée" }[g.state];
+    $("clockLabel").textContent = label;
+    $("clock").textContent = g.state === "ended" ? "0:00" : fmtClock(rem);
+    box.classList.toggle("low", g.state === "running" && rem <= 60000);
+    box.classList.toggle("paused", g.state === "paused");
+    if (lastControls !== g.state) { lastControls = g.state; renderControls(); }
+  }
+
+  function renderControls() {
+    const c = $("controls"); c.innerHTML = "";
+    const add = (label, cls, fn) => { const b = document.createElement("button"); b.type = "button"; b.className = "tool " + cls; b.textContent = label; b.addEventListener("click", () => { unlockAudio(); fn(); }); c.appendChild(b); };
+    if (g.state === "ready") add("Lancer la partie", "primary", startGame);
+    if (g.state === "running") { add("Pause", "", pauseGame); add("Terminer", "warn", () => ask("Terminer la partie maintenant ?", "Oui, terminer", endGame)); }
+    if (g.state === "paused") { add("Reprendre", "primary", resumeGame); add("Terminer", "warn", () => ask("Terminer la partie maintenant ?", "Oui, terminer", endGame)); }
+    if (g.state === "ended") { add("Voir le palmarès", "primary", openCeremony); add("Nouvelle partie", "warn", () => ask("Effacer toutes les touches et préparer une nouvelle partie ?", "Oui, nouvelle partie", newGame)); }
+    if (g.state === "ready" && Object.keys(g.hits).length) add("Effacer les touches", "warn", () => ask("Effacer toutes les touches comptées ?", "Oui, effacer", newGame));
+  }
+
+  function startGame() { g.startV = vnow(); g.state = "running"; saveGame(); paint(); }
+  function pauseGame() { g.state = "paused"; g.pausedSince = Date.now(); saveGame(); paint(); }
+  function resumeGame() { g.pausedAccum += Date.now() - g.pausedSince; g.pausedSince = null; g.state = "running"; saveGame(); paint(); }
+  function endGame() {
+    if (g.state === "paused") { g.pausedAccum += Date.now() - g.pausedSince; g.pausedSince = null; }
+    g.state = "ended"; g.timers = {}; g.doneAt = {}; saveGame();
+    $("confirmBar").hidden = true; horn(); paint(); openCeremony();
+  }
+  function newGame() { g = freshGame(); saveGame(); paint(); toast("Nouvelle partie prête"); }
+
+  function ask(text, yes, fn) {
+    $("confirmText").textContent = text; $("confirmYes").textContent = yes; $("confirmBar").hidden = false;
+    $("confirmYes").onclick = () => { $("confirmBar").hidden = true; fn(); };
+  }
+  $("confirmNo").addEventListener("click", () => $("confirmBar").hidden = true);
+
+  (function loop() { paint(); requestAnimationFrame(loop); })();
+
+  /* ================= Sons ================= */
+  let ctx, noiseBuf;
+  function unlockAudio() { if (!ctx) { try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } if (ctx && ctx.state === "suspended") ctx.resume(); }
+  function tone(f, t0, dur, type = "triangle", vol = .35) {
+    const o = ctx.createOscillator(), gn = ctx.createGain();
+    o.frequency.value = f; o.type = type;
+    gn.gain.setValueAtTime(0.0001, t0); gn.gain.exponentialRampToValueAtTime(vol, t0 + .02); gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(gn).connect(ctx.destination); o.start(t0); o.stop(t0 + dur + .02);
+  }
+  function noise(t0, dur, freq, vol) {
+    if (!noiseBuf) { noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate); const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+    const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), gn = ctx.createGain();
+    s.buffer = noiseBuf; f.type = "bandpass"; f.frequency.value = freq; f.Q.value = .8;
+    gn.gain.setValueAtTime(vol, t0); gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    s.connect(f).connect(gn).connect(ctx.destination); s.start(t0); s.stop(t0 + dur + .02);
+  }
+  const canPlay = () => cfg.sound && ctx;
+  function beep() { if (!canPlay()) return; const t = ctx.currentTime; [[0, 660], [.14, 880], [.28, 1175]].forEach(([d, f]) => tone(f, t + d, .14)); }
+  function horn() { if (!canPlay()) return; const t = ctx.currentTime; [[0, 392], [.35, 392], [.7, 523]].forEach(([d, f], i) => tone(f, t + d, i === 2 ? 1.1 : .3, "sawtooth", .25)); }
+  function drumroll(ms) {
+    if (!canPlay()) return; const t = ctx.currentTime, dur = ms / 1000;
+    for (let x = 0; x < dur; x += .045) noise(t + x, .05, 160 + Math.random() * 60, .15 + .35 * (x / dur));
+    noise(t + dur, 1.2, 6000, .35); tone(98, t + dur, .5, "sine", .5);
+  }
+  function pop() { if (!canPlay()) return; noise(ctx.currentTime, .3, 900 + Math.random() * 600, .25); }
+  function boing() { if (!canPlay()) return; const t = ctx.currentTime; const o = ctx.createOscillator(), gn = ctx.createGain(); o.type = "sine"; o.frequency.setValueAtTime(500, t); o.frequency.exponentialRampToValueAtTime(140, t + .25); gn.gain.setValueAtTime(.25, t); gn.gain.exponentialRampToValueAtTime(.0001, t + .3); o.connect(gn).connect(ctx.destination); o.start(t); o.stop(t + .32); }
+
+  /* ================= Effets (canvas) ================= */
+  const FX = (() => {
+    const cv = $("fx"), c = cv.getContext("2d");
+    let W = 0, H = 0, parts = [], rockets = [], balls = [], spawn = null, raf = null, popCount = 0;
+    function size() { const d = Math.min(devicePixelRatio || 1, 2); W = cv.clientWidth; H = cv.clientHeight; cv.width = W * d; cv.height = H * d; c.setTransform(d, 0, 0, d, 0, 0); }
+    function start(kind, ms, colors) {
+      if (reduced) return;
+      size(); spawn = { kind, colors, until: performance.now() + ms, next: 0 };
+      if (!raf) raf = requestAnimationFrame(tick);
+    }
+    function stop() { spawn = null; parts = []; rockets = []; balls = []; if (raf) cancelAnimationFrame(raf); raf = null; c.clearRect(0, 0, W, H); }
+    function explode(r) {
+      const n = 70 + Math.random() * 40;
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2, s = 1.5 + Math.random() * 5.5;
+        parts.push({ x: r.x, y: r.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, decay: .008 + Math.random() * .012, color: r.color });
+      }
+      if (popCount++ % 2 === 0) pop();
+    }
+    function tick(t) {
+      c.clearRect(0, 0, W, H);
+      if (spawn && t < spawn.until && t >= spawn.next) {
+        if (spawn.kind === "fireworks") {
+          rockets.push({ x: W * (.12 + Math.random() * .76), y: H, vx: (Math.random() - .5) * 1.6, vy: -(H * .015 + Math.random() * H * .006), color: spawn.colors[Math.floor(Math.random() * spawn.colors.length)] });
+          spawn.next = t + 300 + Math.random() * 450;
+        } else {
+          for (let i = 0; i < 3; i++) balls.push({ x: Math.random() * W, y: -30, vx: (Math.random() - .5) * 4, vy: Math.random() * 3, r: 10 + Math.random() * 14, life: 1, bounces: 0 });
+          spawn.next = t + 110;
+          if (Math.random() < .25) boing();
+        }
+      }
+      if (spawn && t >= spawn.until) spawn = null;
+      rockets = rockets.filter(r => {
+        r.x += r.vx; r.y += r.vy; r.vy += .25;
+        c.fillStyle = r.color; c.globalAlpha = 1; c.beginPath(); c.arc(r.x, r.y, 3, 0, 7); c.fill();
+        c.globalAlpha = .4; c.beginPath(); c.arc(r.x - r.vx, r.y - r.vy * 1.5, 2, 0, 7); c.fill();
+        if (r.vy >= -1) { explode(r); return false; }
+        return true;
+      });
+      parts = parts.filter(p => {
+        p.x += p.vx; p.y += p.vy; p.vy += .06; p.vx *= .985; p.vy *= .985; p.life -= p.decay;
+        if (p.life <= 0) return false;
+        c.globalAlpha = Math.max(0, p.life); c.fillStyle = p.color; c.beginPath(); c.arc(p.x, p.y, 2.4, 0, 7); c.fill();
+        return true;
+      });
+      balls = balls.filter(b => {
+        b.vy += .5; b.x += b.vx; b.y += b.vy;
+        if (b.y + b.r > H) { b.y = H - b.r; b.vy *= -.6; b.vx *= .85; b.bounces++; }
+        if (b.bounces > 3) b.life -= .03;
+        if (b.life <= 0) return false;
+        c.globalAlpha = b.life;
+        const gr = c.createRadialGradient(b.x - b.r * .35, b.y - b.r * .4, b.r * .1, b.x, b.y, b.r);
+        gr.addColorStop(0, "#fff8c9"); gr.addColorStop(.45, "#ffd23f"); gr.addColorStop(1, "#d99a00");
+        c.fillStyle = gr; c.beginPath(); c.arc(b.x, b.y, b.r, 0, 7); c.fill();
+        return true;
+      });
+      c.globalAlpha = 1;
+      if (!spawn && !parts.length && !rockets.length && !balls.length) { raf = null; c.clearRect(0, 0, W, H); return; }
+      raf = requestAnimationFrame(tick);
+    }
+    addEventListener("resize", () => { if (raf) size(); });
+    return { start, stop };
+  })();
+
+  /* ================= Palmarès ================= */
+  const teamColor = ti => getComputedStyle(document.documentElement).getPropertyValue(`--t${ti + 1}`).trim() || (ti ? "#c026d3" : "#2563eb");
+  let cer = null, revealTimer = null;
+
+  function openCeremony() {
+    const players = [];
+    teams.forEach((t, ti) => t.students.forEach(n => players.push({ name: n, ti, hits: g.hits[key(ti, n)] || 0 })));
+    const byName = (a, b) => a.name.localeCompare(b.name, "fr");
+    const asc = [...players].sort((a, b) => a.hits - b.hits || byName(a, b));
+    const desc = players.filter(p => p.hits > 0).sort((a, b) => b.hits - a.hits || byName(a, b));
+    const steps = [{ type: "intro" }];
+    if (players.length) {
+      steps.push({ type: "reveal", kind: "least" }, { type: "list", kind: "least" });
+      steps.push({ type: "reveal", kind: "most" });
+      if (desc.length) steps.push({ type: "list", kind: "most" });
+      steps.push({ type: "teams" });
+    }
+    const rnd = () => Math.floor(Math.random() * 100);
+    cer = { players, asc, desc, steps, i: 0, revealed: false, off: { least: rnd(), most: rnd() } };
+    $("stage").hidden = false; $("overlay").hidden = true;
+    go(0); $("stageNext").focus();
+  }
+  function closeCeremony() { clearTimeout(revealTimer); FX.stop(); $("stage").hidden = true; cer = null; }
+
+  function go(i) {
+    clearTimeout(revealTimer); FX.stop();
+    cer.i = i; cer.revealed = false;
+    const s = cer.steps[i];
+    $("stageStep").textContent = `Étape ${i + 1} / ${cer.steps.length}`;
+    $("stagePrev").disabled = i === 0; $("stagePrev").style.visibility = i === 0 ? "hidden" : "visible";
+    $("stageNext").textContent = i === cer.steps.length - 1 ? "Terminer" : "Suivant";
+    const body = $("stageBody");
+    if (s.type === "intro") body.innerHTML = introHTML();
+    if (s.type === "reveal") {
+      body.innerHTML = teaserHTML(s.kind);
+      const ms = 2600;
+      drumroll(ms);
+      revealTimer = setTimeout(() => reveal(s.kind), ms);
+    }
+    if (s.type === "list") body.innerHTML = listHTML(s.kind);
+    if (s.type === "teams") { body.innerHTML = teamsHTML(); FX.start("fireworks", 7000, [teamColor(0), teamColor(1), "#ffcf3f", "#ffffff"]); }
+  }
+  function next() {
+    if (!cer) return;
+    const s = cer.steps[cer.i];
+    if (s.type === "reveal" && !cer.revealed) { clearTimeout(revealTimer); return reveal(s.kind); }
+    if (cer.i < cer.steps.length - 1) go(cer.i + 1); else closeCeremony();
+  }
+  function prev() { if (cer && cer.i > 0) go(cer.i - 1); }
+
+  function chipHTML(ti) { return `<span class="tchip" style="background:${teamColor(ti)}">${esc(teams[ti].name)}</span>`; }
+
+  function introHTML() {
+    const total = cer.players.reduce((a, p) => a + p.hits, 0);
+    if (!cer.players.length) return `<div class="kicker">Fin de la partie</div><p class="teaser">Aucun élève dans les équipes.</p>`;
+    return `<div class="kicker rise">Fin de la partie</div>
+      <h2 class="big pop">Rassemblement !</h2>
+      <p class="sub-lead rise" style="animation-delay:.3s">Tout le monde devant l'écran. Le palmarès va commencer.</p>
+      <div class="stat rise" style="animation-delay:.5s">${hitsTxt(total)} au total · ${cfg.gameMin} min de jeu</div>`;
+  }
+
+  function teaserHTML(kind) {
+    const dots = `<span class="dots"><span>.</span><span>.</span><span>.</span></span>`;
+    return kind === "least"
+      ? `<div class="kicker">Les Intouchables</div><p class="teaser">Et la personne la moins touchée de la partie est${dots}</p>`
+      : `<div class="kicker">Les Téméraires</div><p class="teaser">Et la personne la plus touchée de la partie est${dots}</p>`;
+  }
+
+  function reveal(kind) {
+    cer.revealed = true;
+    const body = $("stageBody");
+    if (kind === "most" && !cer.desc.length) {
+      body.innerHTML = `<div class="kicker">Les Téméraires</div><h2 class="big pop">Personne ?!</h2><p class="phrase rise">Aucune touche de toute la partie. Une vraie partie de campeurs.</p>`;
+      return;
+    }
+    const list = kind === "least" ? cer.asc : cer.desc;
+    const top = list.filter(p => p.hits === list[0].hits);
+    const pool = kind === "least" ? LEAST : MOST, off = cer.off[kind];
+    const kicker = kind === "least" ? "Les Intouchables" : "Les Téméraires";
+    if (top.length === 1) {
+      const p = top[0], [title, phrase] = pool[off % pool.length];
+      body.innerHTML = `<div class="kicker">${kicker}</div>
+        <h2 class="big pop">${esc(p.name)}</h2>
+        <div class="rise" style="animation-delay:.4s">${chipHTML(p.ti)}</div>
+        <span class="badge rise" style="animation-delay:.7s">${esc(title)}</span>
+        <p class="phrase rise" style="animation-delay:1s">${esc(phrase)}</p>
+        <div class="stat rise" style="animation-delay:1.2s">${hitsTxt(p.hits)}</div>`;
+    } else {
+      const shown = top.slice(0, 10), extra = top.length - shown.length;
+      const phrase = kind === "least" ? "Ex æquo ! Un club entier de fantômes." : "Ex æquo ! Une bande de téméraires inarrêtables.";
+      body.innerHTML = `<div class="kicker">${kicker}</div>
+        <h2 class="big many pop">${shown.map(p => `<span>${esc(p.name)}</span>`).join("")}</h2>
+        ${extra ? `<div class="more">et ${extra} autres</div>` : ""}
+        <span class="badge rise" style="animation-delay:.6s">${esc(pool[off % pool.length][0])}</span>
+        <p class="phrase rise" style="animation-delay:.9s">${phrase}</p>
+        <div class="stat rise" style="animation-delay:1.1s">${hitsTxt(top[0].hits)} par personne</div>`;
+    }
+    if (kind === "least") FX.start("fireworks", 8000, ["#ffcf3f", "#ff6b6b", "#5bd1ff", "#9dff8a", "#ffffff", "#ff9ff3"]);
+    else FX.start("balls", 5000);
+  }
+
+  function listHTML(kind) {
+    const list = kind === "least" ? cer.asc : cer.desc;
+    const pool = kind === "least" ? LEAST : MOST, off = cer.off[kind];
+    const top = list.slice(0, 5);
+    const extra = top.length === 5 ? list.slice(5).filter(p => p.hits === top[4].hits).length : 0;
+    const rows = top.map((p, i) => {
+      const rank = 1 + list.findIndex(q => q.hits === p.hits);
+      const [title, phrase] = pool[(off + i) % pool.length];
+      return `<li class="rise ${rank === 1 ? "first" : ""}" style="animation-delay:${(.15 + i * .35).toFixed(2)}s">
+        <span class="rank">${rank}</span>
+        <span class="rname">${esc(p.name)} ${chipHTML(p.ti)}</span>
+        <span class="rhits">${p.hits}<small>${p.hits > 1 ? "touches" : "touche"}</small></span>
+        <span class="rtext"><b>${esc(title)}</b> · ${esc(phrase)}</span>
+      </li>`;
+    }).join("");
+    const head = kind === "least"
+      ? `<div class="kicker">Les Intouchables</div><p class="sub-lead">Pros du camping, de la défense et du camouflage</p>`
+      : `<div class="kicker">Les Téméraires</div><p class="sub-lead">Celles et ceux qui ont tout osé pour aller chercher le drapeau</p>`;
+    return `${head}<ol class="rank-list">${rows}</ol>${extra ? `<div class="more">+ ${extra} autres ex æquo</div>` : ""}`;
+  }
+
+  function teamsHTML() {
+    const stats = teams.map((t, ti) => {
+      const ps = cer.players.filter(p => p.ti === ti), total = ps.reduce((a, p) => a + p.hits, 0);
+      return { ti, total, n: ps.length, avg: ps.length ? total / ps.length : 0 };
+    });
+    const cards = stats.map(s => `<div class="tcard rise" style="--tc:${teamColor(s.ti)}; animation-delay:${.2 + s.ti * .3}s">
+        <h3>${esc(teams[s.ti].name)}</h3>
+        <div class="n">${s.total}</div>
+        <p>${s.total > 1 ? "touches reçues" : "touche reçue"} · ${s.avg.toFixed(1).replace(".", ",")} par élève</p>
+      </div>`).join("");
+    let verdict = "Égalité parfaite en défense !";
+    if (stats.length === 2 && stats[0].n && stats[1].n && Math.abs(stats[0].avg - stats[1].avg) > 0.05) {
+      const best = stats[0].avg < stats[1].avg ? stats[0] : stats[1];
+      verdict = `Défense la plus solide : ${esc(teams[best.ti].name)}`;
+    }
+    return `<div class="kicker">Bilan des équipes</div>
+      <div class="team-cards">${cards}</div>
+      <p class="phrase rise" style="animation-delay:.9s">${verdict}</p>
+      <h2 class="big pop" style="animation-delay:1.2s; font-size:clamp(2.4rem, 7vw, 6rem)">Bravo à toutes et à tous !</h2>`;
+  }
+
+  $("stageNext").addEventListener("click", () => { unlockAudio(); next(); });
+  $("stagePrev").addEventListener("click", prev);
+  $("stageClose").addEventListener("click", closeCeremony);
+
+  /* ================= Réglages ================= */
+  function parseNames(txt) {
+    const seen = new Set();
+    return txt.split(/[\n\r,;\t]+/).map(s => s.trim()).filter(s => s && !seen.has(s.toLowerCase()) && seen.add(s.toLowerCase()));
+  }
+  function chip() { $("chip").textContent = "Attente : " + fmt(cfg.seconds); }
+  function presetRow(boxId, values, current, label, onPick) {
+    const box = $(boxId); box.innerHTML = "";
+    values.forEach(v => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "btn" + (v === current ? " on" : ""); b.textContent = label(v);
+      b.addEventListener("click", () => onPick(v)); box.appendChild(b);
+    });
+  }
+  function setSeconds(s) {
+    cfg.seconds = Math.max(5, Math.min(900, Math.round(+s || 60))); saveCfg();
+    $("secs").value = cfg.seconds; chip(); drawPresets();
+  }
+  function setGameMin(m) {
+    cfg.gameMin = Math.max(1, Math.min(120, Math.round(+m || 20))); saveCfg();
+    $("gmin").value = cfg.gameMin; drawPresets();
+  }
+  function drawPresets() {
+    presetRow("presets", WAIT_PRESETS, cfg.seconds, fmt, setSeconds);
+    presetRow("gamePresets", GAME_PRESETS, cfg.gameMin, v => v + " min", setGameMin);
+  }
+  function toast(msg) { const t = $("toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 2400); }
+
+  function openSettings() {
+    teams.forEach((t, ti) => { $(`t${ti}name`).value = t.name; $(`t${ti}names`).value = t.students.join("\n"); });
+    $("secs").value = cfg.seconds; $("gmin").value = cfg.gameMin; $("sound").checked = cfg.sound; $("funny").checked = cfg.funny;
+    drawPresets(); $("overlay").hidden = false;
+  }
+  $("btnSettings").addEventListener("click", openSettings);
+  $("btnClose").addEventListener("click", () => $("overlay").hidden = true);
+  $("overlay").addEventListener("click", e => { if (e.target.id === "overlay") $("overlay").hidden = true; });
+  $("secs").addEventListener("change", e => setSeconds(e.target.value));
+  $("gmin").addEventListener("change", e => setGameMin(e.target.value));
+  $("sound").addEventListener("change", e => { cfg.sound = e.target.checked; saveCfg(); if (cfg.sound) { unlockAudio(); beep(); } });
+  $("funny").addEventListener("change", e => { cfg.funny = e.target.checked; saveCfg(); });
+  $("btnApply").addEventListener("click", () => {
+    teams = [0, 1].map(ti => ({ name: $(`t${ti}name`).value.trim() || `Équipe ${ti + 1}`, students: parseNames($(`t${ti}names`).value) }));
+    saveTeams(); render();
+    toast(`${teams[0].students.length} + ${teams[1].students.length} élèves enregistrés`);
+  });
+  [0, 1].forEach(ti => $(`file${ti}`).addEventListener("change", e => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = () => { $(`t${ti}names`).value = parseNames(String(r.result)).join("\n"); toast("Fichier chargé. Touchez « Enregistrer les équipes »."); };
+    r.readAsText(f); e.target.value = "";
+  }));
+
+  document.addEventListener("keydown", e => {
+    if (cer) {
+      if (["ArrowRight", " ", "Enter", "PageDown"].includes(e.key)) { e.preventDefault(); next(); }
+      else if (["ArrowLeft", "PageUp"].includes(e.key)) { e.preventDefault(); prev(); }
+      else if (e.key === "Escape") closeCeremony();
+      return;
+    }
+    if (e.key === "Escape") { $("overlay").hidden = true; $("confirmBar").hidden = true; }
+  });
+
+  $("btnFull").addEventListener("click", async () => {
+    try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); }
+    catch { toast("Plein écran indisponible ici : utilisez F11"); }
+  });
+
+  async function wake() { try { await navigator.wakeLock?.request("screen"); } catch {} }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") wake(); });
+  wake();
+
+  addEventListener("resize", layout);
+  chip(); render();
+})();
+</script>
+
+<script>
+  // Application installable et utilisable hors connexion
+  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+  let installEvt = null;
+  addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; document.getElementById("btnInstall").hidden = false; });
+  addEventListener("appinstalled", () => { document.getElementById("btnInstall").hidden = true; });
+  document.getElementById("btnInstall").addEventListener("click", async () => {
+    if (!installEvt) return;
+    installEvt.prompt(); await installEvt.userChoice; installEvt = null;
+    document.getElementById("btnInstall").hidden = true;
+  });
+</script>
+</body>
+</html>
